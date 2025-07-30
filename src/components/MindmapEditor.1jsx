@@ -1,0 +1,287 @@
+// --- START OF FILE MindMapEditor.jsx (with Draggable Nodes) ---
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+
+// --- Constants for Layout ---
+const NODE_WIDTH = 180;
+const NODE_HEIGHT = 60;
+const H_SPACING = 80;
+const V_SPACING = 30;
+
+// --- Helper: Find a node in the tree ---
+const findNode = (node, id) => {
+    if (node.id === id) return node;
+    for (const child of node.children) {
+        const found = findNode(child, id);
+        if (found) return found;
+    }
+    return null;
+};
+
+// --- Helper: Check if a node is a descendant of another ---
+const isDescendant = (node, potentialParentId) => {
+    if (node.id === potentialParentId) return true;
+    for (const child of node.children) {
+        if (isDescendant(child, potentialParentId)) return true;
+    }
+    return false;
+};
+
+
+// --- The MindMapNode Component ---
+// Now handles drag events and improved editing UX
+function MindMapNode({ 
+    node, position, parentPosition, isEditing, isDropTarget, isGhost,
+    onStartEdit, onSave, onCancel, 
+    onNodeMouseDown, onNodeMouseOver, onNodeMouseOut 
+}) {
+    const [editText, setEditText] = useState(node.text);
+
+    useEffect(() => { setEditText(node.text); }, [node.text]);
+
+    const handleSave = () => onSave(node.id, editText);
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSave();
+        }
+        if (e.key === 'Escape') {
+            onCancel();
+        }
+    };
+
+    const getConnectorPath = () => {
+        if (!parentPosition) return null;
+        const startX = parentPosition.x;
+        const startY = parentPosition.y;
+        const endX = position.x;
+        const endY = position.y;
+
+        const controlX = startX + (endX - startX) / 2;
+        return `M ${startX + NODE_WIDTH / 2},${startY} C ${controlX},${startY} ${controlX},${endY} ${endX - NODE_WIDTH / 2},${endY}`;
+    };
+
+    const nodeStyle = {
+        opacity: isGhost ? 0.5 : 1,
+        pointerEvents: isGhost ? 'none' : 'auto',
+    };
+
+    return (
+        <g 
+          transform={`translate(${position.x - NODE_WIDTH / 2}, ${position.y - NODE_HEIGHT / 2})`}
+          style={nodeStyle}
+          // Drag-and-drop event handlers
+          onMouseDown={(e) => onNodeMouseDown(e, node.id)}
+          onMouseOver={(e) => { e.stopPropagation(); onNodeMouseOver(node.id); }}
+          onMouseOut={(e) => { e.stopPropagation(); onNodeMouseOut(); }}
+        >
+            {parentPosition && !isGhost && (
+                <path d={getConnectorPath()} fill="none" stroke="#a9a9a9" strokeWidth="2" />
+            )}
+            
+            {isEditing ? (
+                <foreignObject x="0" y="0" width={NODE_WIDTH} height={NODE_HEIGHT + 30}>
+                    <div xmlns="http://www.w3.org/1999/xhtml" className="node-form">
+                        <textarea value={editText} onChange={(e) => setEditText(e.target.value)} onKeyDown={handleKeyDown} autoFocus />
+                        <div className="node-buttons">
+                            <button onClick={handleSave}>✓</button>
+                            <button onClick={onCancel}>✕</button>
+                        </div>
+                    </div>
+                </foreignObject>
+            ) : (
+                <g onDoubleClick={() => onStartEdit(node.id)}>
+                    <rect
+                        width={NODE_WIDTH}
+                        height={NODE_HEIGHT}
+                        rx="8"
+                        fill="#f0f0f0"
+                        stroke={isDropTarget ? '#007bff' : '#555'} // Highlight if it's a drop target
+                        strokeWidth="2"
+                        className="node-rect"
+                    />
+                    <foreignObject x="10" y="10" width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20}>
+                        <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{node.text}</p>
+                    </foreignObject>
+                </g>
+            )}
+        </g>
+    );
+}
+
+// --- The Main MindMapEditor Component ---
+export default function MindMapEditor({ initialData }) {
+    const [data, setData] = useState(initialData);
+    const [editingId, setEditingId] = useState(null);
+    
+    // --- State for Drag & Drop ---
+    const [draggingNodeId, setDraggingNodeId] = useState(null);
+    const [dropTargetId, setDropTargetId] = useState(null);
+    const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
+
+    const svgRef = useRef(null);
+    const [viewBox, setViewBox] = useState({ x: -200, y: -400, width: 1000, height: 800 });
+    const [isPanning, setIsPanning] = useState(false);
+    const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+    const nodePositions = useMemo(() => { /* ... (unchanged from previous version) ... */ });
+    
+    // --- Tree Manipulation Logic for Drag-and-Drop ---
+    const handleUpdateNode = (id, newText) => { /* ... (unchanged) ... */ };
+    
+    const handleReparentNode = (draggedId, targetId) => {
+        if (draggedId === targetId || draggedId === 'root') return;
+
+        const draggedNode = findNode(data, draggedId);
+        if (!draggedNode) return;
+        
+        // Prevent dropping a node onto its own descendant
+        if (isDescendant(draggedNode, targetId)) {
+            console.error("Cannot drop a node onto its own descendant.");
+            return;
+        }
+
+        // 1. Remove node from old parent (immutable)
+        const removeNode = (node, id) => {
+            const newChildren = node.children.filter(child => child.id !== id);
+            if (newChildren.length < node.children.length) {
+                return { ...node, children: newChildren };
+            }
+            return { ...node, children: newChildren.map(child => removeNode(child, id)) };
+        };
+        const dataWithoutNode = removeNode(data, draggedId);
+
+        // 2. Add node to new parent (immutable)
+        const addNode = (node, parentId, nodeToAdd) => {
+            if (node.id === parentId) {
+                return { ...node, children: [...node.children, nodeToAdd] };
+            }
+            return { ...node, children: node.children.map(child => addNode(child, parentId, nodeToAdd)) };
+        };
+        const newData = addNode(dataWithoutNode, targetId, draggedNode);
+
+        setData(newData);
+    };
+
+    // --- Drag & Drop Event Handlers ---
+    const handleNodeMouseDown = (e, nodeId) => {
+        e.stopPropagation(); // Prevent pan from starting
+        if (nodeId !== 'root') { // The root node cannot be dragged
+           setDraggingNodeId(nodeId);
+        }
+    };
+    
+    const handleGlobalMouseMove = (e) => {
+        if (isPanning) { /* ... pan logic (unchanged) ... */ }
+
+        if (draggingNodeId) {
+            // Convert client coordinates to SVG coordinates
+            const CTM = svgRef.current.getScreenCTM();
+            const svgPoint = svgRef.current.createSVGPoint();
+            svgPoint.x = e.clientX;
+            svgPoint.y = e.clientY;
+            const transformedPoint = svgPoint.matrixTransform(CTM.inverse());
+            setDragPosition({ x: transformedPoint.x, y: transformedPoint.y });
+        }
+    };
+
+    const handleGlobalMouseUp = () => {
+        if (draggingNodeId && dropTargetId) {
+            handleReparentNode(draggingNodeId, dropTargetId);
+        }
+        setDraggingNodeId(null);
+        setDropTargetId(null);
+        setIsPanning(false);
+    };
+
+    // Pan & Zoom handlers (handleMouseDown, handleWheel) are mostly unchanged
+    // but we add the global mouse move/up handlers to the main div
+    
+    const renderNodes = (node, parentPosition) => { /* ... (unchanged) ... */ };
+    
+    const draggingNodeData = useMemo(() => {
+        if (!draggingNodeId) return null;
+        return findNode(data, draggingNodeId);
+    }, [draggingNodeId, data]);
+
+    return (
+        <div 
+          className="mindmap-container"
+          onMouseMove={handleGlobalMouseMove}
+          onMouseUp={handleGlobalMouseUp}
+          onMouseLeave={handleGlobalMouseUp}
+        >
+            <svg
+                ref={svgRef}
+                width="100%"
+                height="80vh"
+                viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+                onMouseDown={(e) => { setIsPanning(true); setPanStart({ x: e.clientX, y: e.clientY }); }}
+                onWheel={(e) => { /* ... (unchanged) ... */ }}
+                style={{ cursor: isPanning ? 'grabbing' : (draggingNodeId ? 'move' : 'grab'), border: '1px solid #ccc' }}
+            >
+                <defs>
+                    <style>{`
+                        /* ... (unchanged CSS, with one addition) ... */
+                        .node-rect { cursor: pointer; transition: fill 0.2s, stroke 0.2s; }
+                        .node-rect:hover { fill: #e0e0e0; }
+                    `}</style>
+                </defs>
+
+                <g transform="translate(100, 300)">
+                   {renderNodes(data, null, draggingNodeId)}
+                </g>
+                
+                {/* --- RENDER THE GHOST NODE FOR DRAGGING --- */}
+                {draggingNodeId && draggingNodeData && (
+                    <g transform={`translate(${dragPosition.x}, ${dragPosition.y})`} style={{pointerEvents: 'none', opacity: 0.7}}>
+                        <rect
+                            x={-NODE_WIDTH / 2}
+                            y={-NODE_HEIGHT / 2}
+                            width={NODE_WIDTH}
+                            height={NODE_HEIGHT}
+                            rx="8"
+                            fill="#d0e8ff"
+                            stroke="#007bff"
+                        />
+                         <foreignObject x={-NODE_WIDTH / 2 + 10} y={-NODE_HEIGHT / 2 + 10} width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20}>
+                            <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{draggingNodeData.text}</p>
+                        </foreignObject>
+                    </g>
+                )}
+            </svg>
+        </div>
+    );
+
+    // --- Recursive rendering function (needs modification) ---
+    function renderNodes(node, parentPosition, ghostId) {
+        const position = nodePositions.get(node.id);
+        if (!position) return null;
+
+        const currentNode = (
+            <MindMapNode
+                key={node.id}
+                node={node}
+                position={position}
+                parentPosition={parentPosition}
+                isEditing={editingId === node.id}
+                isDropTarget={dropTargetId === node.id}
+                isGhost={ghostId === node.id} // Hide the original while dragging
+                onStartEdit={setEditingId}
+                onSave={handleUpdateNode}
+                onCancel={() => setEditingId(null)}
+                // Drag and drop props
+                onNodeMouseDown={handleNodeMouseDown}
+                onNodeMouseOver={setDropTargetId}
+                onNodeMouseOut={() => setDropTargetId(null)}
+            />
+        );
+
+        const childNodes = node.children.map(child => renderNodes(child, position, ghostId));
+        return [currentNode, ...childNodes].flat();
+    }
+    
+    // Unchanged helper functions for layout and pan/zoom
+    /* ... nodePositions, handleMouseDown, handleWheel, etc. ... */
+}
