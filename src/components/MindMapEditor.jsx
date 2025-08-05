@@ -1,17 +1,17 @@
-// --- START OF FILE MindMapEditor.jsx ---
+// --- START OF FILE MindMapEditor.jsx (Final, Robust Version) ---
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 
-// --- Constants for Layout ---
+// --- Constants ---
 const NODE_WIDTH = 180;
 const NODE_HEIGHT = 60;
-const H_SPACING = 80; // Horizontal space between levels
-const V_SPACING = 30; // Vertical space between nodes at the same level
+const H_SPACING = 80;
+const V_SPACING = 30;
 
-// --- Helper: Find a node in the tree by its ID ---
+// --- Helper Functions ---
 const findNode = (node, id) => {
+    if (!node) return null;
     if (node.id === id) return node;
-    // [FIX] Safely handle nodes with no 'children' property
     const children = node.children || [];
     for (const child of children) {
         const found = findNode(child, id);
@@ -19,11 +19,9 @@ const findNode = (node, id) => {
     }
     return null;
 };
-
-// --- Helper: Check if a node is a descendant of another (to prevent circular drops) ---
 const isDescendant = (node, potentialParentId) => {
+    if (!node) return false;
     if (node.id === potentialParentId) return true;
-    // [FIX] Safely handle nodes with no 'children' property
     const children = node.children || [];
     for (const child of children) {
         if (isDescendant(child, potentialParentId)) return true;
@@ -31,91 +29,45 @@ const isDescendant = (node, potentialParentId) => {
     return false;
 };
 
-
-// ====================================================================================
-// --- MindMapNode Component: Renders a single node, its connector, and handles UI ---
-// ====================================================================================
+// --- MindMapNode Component ---
 function MindMapNode({
-    node, position, parentPosition, isEditing, isDropTarget, isGhost,
-    onStartEdit, onSave, onCancel,
-    onNodeMouseDown, onNodeMouseOver, onNodeMouseOut
+    node, position, parentPosition, isEditing, isSelected, isDropTarget,
+    onNodeMouseDown, onNodeDoubleClick, onNodeMouseOver, onNodeMouseOut,
+    editedText, onTextChange, onTextBlur
 }) {
-    const [editText, setEditText] = useState(node.text);
-
-    useEffect(() => { setEditText(node.text); }, [node.text]);
-
-    const handleSave = () => onSave(node.id, editText);
-
-    // --- Enhanced keyboard controls for editing ---
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault(); // Prevent new line in textarea
-            handleSave();
-        }
-        if (e.key === 'Escape') {
-            onCancel();
-        }
-    };
-
-    // --- Draws a smooth Bézier curve from the parent to this node ---
     const getConnectorPath = () => {
         if (!parentPosition) return null;
         const startX = parentPosition.x + NODE_WIDTH / 2;
         const startY = parentPosition.y;
         const endX = position.x - NODE_WIDTH / 2;
         const endY = position.y;
-
         const controlX = startX + (endX - startX) / 2;
         return `M ${startX},${startY} C ${controlX},${startY} ${controlX},${endY} ${endX},${endY}`;
-    };
-
-    const nodeStyle = {
-        opacity: isGhost ? 0.3 : 1, // Make original node semi-transparent while dragging
-        pointerEvents: isGhost ? 'none' : 'auto',
     };
 
     return (
         <g
             transform={`translate(${position.x - NODE_WIDTH / 2}, ${position.y - NODE_HEIGHT / 2})`}
-            style={nodeStyle}
-            // --- Drag-and-drop event handlers ---
-            onMouseDown={(e) => onNodeMouseDown(e, node.id)}
             onMouseOver={(e) => { e.stopPropagation(); onNodeMouseOver(node.id); }}
             onMouseOut={(e) => { e.stopPropagation(); onNodeMouseOut(); }}
         >
-            {parentPosition && !isGhost && (
-                <path d={getConnectorPath()} fill="none" stroke="#a9a9a9" strokeWidth="2" />
-            )}
-
+            {parentPosition && <path d={getConnectorPath()} fill="none" stroke="#a9a9a9" strokeWidth="2" />}
             {isEditing ? (
-                // --- EDIT MODE: Using <foreignObject> to render an HTML form ---
-                <foreignObject x="0" y="0" width={NODE_WIDTH} height={NODE_HEIGHT + 30}>
-                    <div xmlns="http://www.w3.org/1999/xhtml" className="node-form">
-                        <textarea
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            autoFocus
-                        />
-                        <div className="node-buttons">
-                            <button onClick={handleSave}>✓</button>
-                            <button onClick={onCancel}>✕</button>
-                        </div>
+                <foreignObject x="0" y="0" width={NODE_WIDTH} height={NODE_HEIGHT}>
+                    <div xmlns="http://www.w3.org/1999/xhtml" className="node-form-miro">
+                        <textarea value={editedText} onChange={onTextChange} onBlur={onTextBlur} autoFocus />
                     </div>
                 </foreignObject>
             ) : (
-                // --- DISPLAY MODE: Using standard SVG elements ---
-                <g onDoubleClick={() => onStartEdit(node.id)}>
+                <g>
                     <rect
-                        width={NODE_WIDTH}
-                        height={NODE_HEIGHT}
-                        rx="8"
-                        fill="#f0f0f0"
-                        stroke={isDropTarget ? '#007bff' : '#555'} // Highlight if it's a drop target
-                        strokeWidth="2"
-                        className="node-rect"
+                        width={NODE_WIDTH} height={NODE_HEIGHT} rx="8" fill="#f0f0f0"
+                        stroke={isSelected ? '#007bff' : (isDropTarget ? '#28a745' : '#555')}
+                        strokeWidth="2" className="node-rect"
+                        onMouseDown={(e) => onNodeMouseDown(e, node.id)}
+                        onDoubleClick={(e) => onNodeDoubleClick(e, node.id)}
                     />
-                    <foreignObject x="10" y="10" width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20}>
+                    <foreignObject x="10" y="10" width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20} style={{ pointerEvents: 'none' }}>
                         <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{node.text}</p>
                     </foreignObject>
                 </g>
@@ -123,239 +75,204 @@ function MindMapNode({
         </g>
     );
 }
+const MemoizedMindMapNode = React.memo(MindMapNode);
 
-// ====================================================================================
-// --- Main MindMapEditor Component: Manages state, layout, and interactions ---
-// ====================================================================================
+// --- Main MindMapEditor Component ---
 export default function MindMapEditor({ initialData }) {
     const [data, setData] = useState(initialData);
-    const [editingId, setEditingId] = useState(null);
-
-    // --- State for Drag & Drop ---
-    const [draggingNodeId, setDraggingNodeId] = useState(null);
-    const [dropTargetId, setDropTargetId] = useState(null);
-    const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
-
-    // --- State for Pan & Zoom ---
-    const svgRef = useRef(null);
     const [viewBox, setViewBox] = useState({ x: -200, y: -400, width: 1000, height: 800 });
-    const [isPanning, setIsPanning] = useState(false);
-    const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+    const [selectedNodeId, setSelectedNodeId] = useState(null);
+    const [editingId, setEditingId] = useState(null);
+    const [editedText, setEditedText] = useState('');
+    const [dropTargetId, setDropTargetId] = useState(null);
+    const [ghostNode, setGhostNode] = useState(null);
 
-    // --- Memoized Layout Calculation ---
+    const interactionRef = useRef({ type: 'none', startPos: { x: 0, y: 0 } });
+    const svgRef = useRef(null);
+
     const nodePositions = useMemo(() => {
         const positions = new Map();
         function calculatePositions(node, level, parentY) {
-            const y = parentY;
-            const x = level * (NODE_WIDTH + H_SPACING);
-            positions.set(node.id, { x, y });
-
-            // [FIX] The main source of the error. Default to an empty array.
+            if (!node) return;
+            positions.set(node.id, { x: level * (NODE_WIDTH + H_SPACING), y: parentY });
             const children = node.children || [];
             const totalChildHeight = children.length * (NODE_HEIGHT + V_SPACING) - V_SPACING;
-            let currentY = y - totalChildHeight / 2;
-
-            children.forEach(child => {
-                const childY = currentY + NODE_HEIGHT / 2;
-                calculatePositions(child, level + 1, childY);
-                currentY += NODE_HEIGHT + V_SPACING;
-            });
+            let currentY = parentY - totalChildHeight / 2;
+            children.forEach(child => { calculatePositions(child, level + 1, currentY + NODE_HEIGHT / 2); currentY += NODE_HEIGHT + V_SPACING; });
         }
-        if (data) {
-             calculatePositions(data, 0, 0);
-        }
+        if (data) calculatePositions(data, 0, 0);
         return positions;
     }, [data]);
 
-    // --- Memoized Data for Ghost Node ---
-    const draggingNodeData = useMemo(() => {
-        if (!draggingNodeId || !data) return null;
-        return findNode(data, draggingNodeId);
-    }, [draggingNodeId, data]);
-
-
-    // --- State Update Handlers ---
-    const handleUpdateNode = useCallback((id, newText) => {
-        const updateRecursively = (node) => {
-            if (node.id === id) {
-                return { ...node, text: newText };
-            }
-            // [FIX] Safely map over children that might not exist
-            const children = node.children || [];
-            return { ...node, children: children.map(child => updateRecursively(child)) };
-        };
-        setData(prevData => updateRecursively(prevData));
-        setEditingId(null);
-    }, []);
-
-    const handleReparentNode = useCallback((draggedId, targetId) => {
-        if (draggedId === targetId || draggedId === 'root') return;
-
-        const draggedNode = findNode(data, draggedId);
-        if (!draggedNode || isDescendant(draggedNode, targetId)) return;
-
-        // 1. Remove node from old parent (immutable)
-        const removeNode = (node, id) => {
-            // [FIX] Safely filter children
-            const children = node.children || [];
-            const newChildren = children.filter(child => child.id !== id);
-            return { ...node, children: newChildren.map(child => removeNode(child, id)) };
-        };
-        const dataWithoutNode = removeNode(data, draggedId);
-
-        // 2. Add node to new parent (immutable)
-        const addNode = (node, parentId, nodeToAdd) => {
-            if (node.id === parentId) {
-                const children = node.children || [];
-                return { ...node, children: [...children, nodeToAdd] };
-            }
-            // [FIX] Safely map over children
-            const children = node.children || [];
-            return { ...node, children: children.map(child => addNode(child, parentId, nodeToAdd)) };
-        };
-        const newData = addNode(dataWithoutNode, targetId, draggedNode);
-        setData(newData);
-    }, [data]);
-
-
-    // --- Global Mouse Event Handlers for Pan & Drag ---
     const handleNodeMouseDown = useCallback((e, nodeId) => {
         e.stopPropagation();
-        if (nodeId !== 'root') {
-            setDraggingNodeId(nodeId);
-        }
+        interactionRef.current = {
+            type: 'drag',
+            startPos: { x: e.clientX, y: e.clientY },
+            nodeId: nodeId
+        };
+        setSelectedNodeId(nodeId);
     }, []);
 
-    const handleGlobalMouseMove = useCallback((e) => {
+    const handleNodeDoubleClick = useCallback((e, nodeId) => {
+        e.stopPropagation();
+        // [THE FIX #1] Explicitly cancel any drag operation when a double-click is detected.
+        interactionRef.current = { type: 'edit' };
+        setGhostNode(null); // Ensure no ghost node is shown
+
+        const node = findNode(data, nodeId);
+        if (node) {
+            setEditingId(nodeId);
+            setEditedText(node.text);
+            setSelectedNodeId(nodeId); // An edited node is always selected
+        }
+    }, [data]);
+
+    const handleBackgroundMouseDown = useCallback((e) => {
+        if (editingId) {
+            // This is the auto-save logic
+            const node = findNode(data, editingId);
+            if(node && node.text !== editedText) {
+                setData(prev => {
+                    if (!prev) return null;
+                    const update = n => n.id === editingId ? { ...n, text: editedText } : { ...n, children: (n.children || []).map(update) };
+                    return update(prev);
+                });
+            }
+        }
+        setEditingId(null);
+        setSelectedNodeId(null);
+        interactionRef.current = { type: 'pan', startPos: { x: e.clientX, y: e.clientY } };
+    }, [editingId, editedText, data]);
+
+    const handleMouseMove = useCallback((e) => {
+        const { type, nodeId, startPos } = interactionRef.current;
         const svg = svgRef.current;
-        if (!svg) return;
-        
-        if (isPanning) {
-            const CTM = svg.getScreenCTM();
-            if (!CTM) return;
-            const dx = e.clientX - panStart.x;
-            const dy = e.clientY - panStart.y;
+        if (!svg || type === 'none' || type === 'edit') return;
+
+        if (type === 'pan') {
+            const dx = e.clientX - startPos.x;
+            const dy = e.clientY - startPos.y;
             const scale = viewBox.width / svg.clientWidth;
             setViewBox(prev => ({ ...prev, x: prev.x - dx * scale, y: prev.y - dy * scale }));
-            setPanStart({ x: e.clientX, y: e.clientY });
-            return;
-        }
+            interactionRef.current.startPos = { x: e.clientX, y: e.clientY };
+        } else if (type === 'drag') {
+            // [THE FIX #2] Create the ghost node here, on the first sign of movement.
+            if (!ghostNode) {
+                const nodeData = findNode(data, nodeId);
+                if (nodeData) setGhostNode(nodeData);
+            }
 
-        if (draggingNodeId) {
-            const CTM = svg.getScreenCTM();
-             if (!CTM) return;
+            const CTM = svg.getScreenCTM()?.inverse();
+            if (!CTM) return;
             const svgPoint = svg.createSVGPoint();
             svgPoint.x = e.clientX;
             svgPoint.y = e.clientY;
-            const transformedPoint = svgPoint.matrixTransform(CTM.inverse());
-            setDragPosition({ x: transformedPoint.x, y: transformedPoint.y });
+            const transformedPoint = svgPoint.matrixTransform(CTM);
+            setGhostNode(prev => prev ? { ...prev, x: transformedPoint.x, y: transformedPoint.y } : null);
         }
-    }, [isPanning, draggingNodeId, panStart.x, panStart.y, viewBox.width]);
+    }, [viewBox, data, ghostNode]);
 
-    const handleGlobalMouseUp = useCallback(() => {
-        if (draggingNodeId && dropTargetId) {
-            handleReparentNode(draggingNodeId, dropTargetId);
+    const handleMouseUp = useCallback(() => {
+        const { type, nodeId } = interactionRef.current;
+
+        if (type === 'drag' && nodeId && dropTargetId && nodeId !== dropTargetId) {
+            setData(prevData => {
+                if (!prevData) return null;
+                const draggedNode = findNode(prevData, nodeId);
+                if (!draggedNode || isDescendant(draggedNode, dropTargetId)) return prevData;
+                const removeNode = (n, id) => ({ ...n, children: (n.children || []).filter(c => c.id !== id).map(c => removeNode(c, id)) });
+                const addNode = (n, pId, node) => n.id === pId ? { ...n, children: [...(n.children || []), node] } : { ...n, children: (n.children || []).map(c => addNode(c, pId, node)) };
+                return addNode(removeNode(prevData, nodeId), dropTargetId, draggedNode);
+            });
         }
-        setDraggingNodeId(null);
+        interactionRef.current = { type: 'none' };
+        setGhostNode(null);
         setDropTargetId(null);
-        setIsPanning(false);
-    }, [draggingNodeId, dropTargetId, handleReparentNode]);
+    }, [dropTargetId]);
+
+    const handleTextBlur = useCallback(() => {
+        if (!editingId) return;
+        const node = findNode(data, editingId);
+        if(node && node.text !== editedText) {
+            setData(prev => {
+                if (!prev) return null;
+                const update = n => n.id === editingId ? { ...n, text: editedText } : { ...n, children: (n.children || []).map(update) };
+                return update(prev);
+            });
+        }
+        setEditingId(null);
+    }, [editingId, editedText, data]);
 
     const handleWheel = useCallback((e) => {
         e.preventDefault();
-        const svg = svgRef.current;
-        if (!svg) return;
-
-        const zoomFactor = 1.1;
+        const svg = svgRef.current; if (!svg) return;
         const { clientX, clientY } = e;
         const { top, left, width, height } = svg.getBoundingClientRect();
-        
         const mouseX = viewBox.x + (clientX - left) * (viewBox.width / width);
         const mouseY = viewBox.y + (clientY - top) * (viewBox.height / height);
-        
+        const zoomFactor = 1.1;
         const newWidth = e.deltaY < 0 ? viewBox.width / zoomFactor : viewBox.width * zoomFactor;
         const newHeight = e.deltaY < 0 ? viewBox.height / zoomFactor : viewBox.height * zoomFactor;
-
-        setViewBox({
-            x: mouseX - (clientX - left) * (newWidth / width),
-            y: mouseY - (clientY - top) * (newHeight / height),
-            width: newWidth,
-            height: newHeight
-        });
+        setViewBox({ x: mouseX - (clientX - left) * (newWidth / width), y: mouseY - (clientY - top) * (newHeight / height), width: newWidth, height: newHeight });
     }, [viewBox]);
 
-    // --- Recursive Rendering Function ---
     const renderNodes = useCallback((node, parentPosition) => {
+        if (!node) return null;
         const position = nodePositions.get(node.id);
         if (!position) return null;
+        
+        // Hide the original node while it's being dragged
+        if (ghostNode && ghostNode.id === node.id) {
+             const children = (node.children || []).map(child => renderNodes(child, position));
+             return <React.Fragment key={`${node.id}-ghost-children`}>{children}</React.Fragment>;
+        }
 
-        const currentNode = (
-            <MindMapNode
-                key={node.id}
-                node={node}
-                position={position}
-                parentPosition={parentPosition}
-                isEditing={editingId === node.id}
-                isDropTarget={dropTargetId === node.id && draggingNodeId !== node.id}
-                isGhost={draggingNodeId === node.id}
-                onStartEdit={setEditingId}
-                onSave={handleUpdateNode}
-                onCancel={() => setEditingId(null)}
-                onNodeMouseDown={handleNodeMouseDown}
-                onNodeMouseOver={setDropTargetId}
-                onNodeMouseOut={() => setDropTargetId(null)}
-            />
+        return (
+            <React.Fragment key={node.id}>
+                <MemoizedMindMapNode
+                    node={node} position={position} parentPosition={parentPosition}
+                    isSelected={selectedNodeId === node.id}
+                    isEditing={editingId === node.id}
+                    isDropTarget={dropTargetId === node.id}
+                    onNodeMouseDown={handleNodeMouseDown}
+                    onNodeDoubleClick={handleNodeDoubleClick}
+                    onNodeMouseOver={setDropTargetId}
+                    onNodeMouseOut={() => setDropTargetId(null)}
+                    editedText={editedText}
+                    onTextChange={(e) => setEditedText(e.target.value)}
+                    onTextBlur={handleTextBlur}
+                />
+                {(node.children || []).map(child => renderNodes(child, position))}
+            </React.Fragment>
         );
-        // [FIX] Safely map over children
-        const children = node.children || [];
-        const childNodes = children.map(child => renderNodes(child, position));
-        return [currentNode, ...childNodes].flat();
-    }, [nodePositions, editingId, dropTargetId, draggingNodeId, handleUpdateNode, handleNodeMouseDown]);
-
+    }, [nodePositions, selectedNodeId, editingId, dropTargetId, ghostNode, editedText, handleNodeMouseDown, handleNodeDoubleClick, handleTextBlur]);
 
     return (
-        <div
-            className="mindmap-container"
-            onMouseMove={handleGlobalMouseMove}
-            onMouseUp={handleGlobalMouseUp}
-            onMouseLeave={handleGlobalMouseUp}
-        >
+        <div onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
             <svg
-                ref={svgRef}
-                width="100%"
-                height="80vh"
-                viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-                onMouseDown={(e) => { setIsPanning(true); setPanStart({ x: e.clientX, y: e.clientY }); }}
-                onWheel={handleWheel}
-                style={{ cursor: isPanning ? 'grabbing' : (draggingNodeId ? 'move' : 'grab'), border: '1px solid #ccc', userSelect: 'none' }}
+                ref={svgRef} width="100%" height="80vh" viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+                onMouseDown={handleBackgroundMouseDown} onWheel={handleWheel}
+                style={{ cursor: interactionRef.current.type === 'pan' ? 'grabbing' : (interactionRef.current.type === 'drag' ? 'move' : 'grab'), border: '1px solid #ccc', userSelect: 'none' }}
             >
                 <defs>
                     <style>{`
-                        .node-rect { cursor: pointer; transition: fill 0.2s, stroke 0.2s; }
-                        .node-rect:hover { fill: #e0e0e0; }
+                        .node-rect { cursor: pointer; transition: stroke 0.2s; }
                         .node-text { font-family: sans-serif; font-size: 14px; margin: 0; color: #333; text-align: center; word-wrap: break-word; }
-                        .node-form { display: flex; flex-direction: column; height: 100%; }
-                        .node-form textarea {
-                            flex-grow: 1; border: 1px solid #007bff; border-radius: 4px; padding: 5px;
-                            font-family: sans-serif; font-size: 14px; resize: none;
+                        .node-form-miro textarea {
+                            width: 100%; height: 100%; box-sizing: border-box;
+                            border: 2px solid #007bff; border-radius: 8px;
+                            padding: 8px; font-family: sans-serif; font-size: 14px; resize: none; text-align: center;
+                            background-color: #f0f0f0;
                         }
-                        .node-buttons { display: flex; justify-content: flex-end; gap: 5px; margin-top: 5px; }
-                        .node-buttons button { border: none; background: #ccc; border-radius: 4px; cursor: pointer; padding: 2px 8px; }
-                        .node-buttons button:first-of-type { background: #28a745; color: white; }
                     `}</style>
                 </defs>
-
-                {/* Main group to center the root node */}
-                <g transform="translate(100, 300)">
-                    {data && renderNodes(data, null)}
-                </g>
-
-                {/* Render the "ghost" node that follows the cursor while dragging */}
-                {draggingNodeId && draggingNodeData && (
-                    <g transform={`translate(${dragPosition.x}, ${dragPosition.y})`} style={{ pointerEvents: 'none', opacity: 0.7 }}>
+                <g transform="translate(100, 300)">{data && renderNodes(data, null)}</g>
+                {ghostNode && (
+                    <g transform={`translate(${ghostNode.x}, ${ghostNode.y})`} style={{ pointerEvents: 'none', opacity: 0.7 }}>
                         <rect x={-NODE_WIDTH / 2} y={-NODE_HEIGHT / 2} width={NODE_WIDTH} height={NODE_HEIGHT} rx="8" fill="#d0e8ff" stroke="#007bff" />
                         <foreignObject x={-NODE_WIDTH / 2 + 10} y={-NODE_HEIGHT / 2 + 10} width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20}>
-                            <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{draggingNodeData.text}</p>
+                            <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{ghostNode.text}</p>
                         </foreignObject>
                     </g>
                 )}
@@ -363,5 +280,3 @@ export default function MindMapEditor({ initialData }) {
         </div>
     );
 }
-
-// --- END OF FILE MindMapEditor.jsx ---
