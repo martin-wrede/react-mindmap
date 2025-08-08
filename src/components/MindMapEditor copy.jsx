@@ -1,15 +1,14 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+// --- START OF FILE MindMapEditor.jsx (Final, Robust Version) ---
 
-// --- Constants (MODIFIED for Radial Layout) ---
-const NODE_RADIUS_L1 = 90; // Radius for main tasks
-const NODE_RADIUS_L2 = 60; // Radius for sub-tasks
-const NODE_RADIUS_L3 = 45; // Radius for sub-sub-tasks
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 
-const RADIAL_DISTANCE_L1 = 300; // Distance of tasks from center
-const RADIAL_DISTANCE_L2 = 180; // Distance of sub-tasks from parent
-const RADIAL_DISTANCE_L3 = 140; // Distance of sub-sub-tasks from parent
+// --- Constants ---
+const NODE_WIDTH = 180;
+const NODE_HEIGHT = 60;
+const H_SPACING = 80;
+const V_SPACING = 30;
 
-// --- Helper Functions (No changes needed, but included for completeness) ---
+// --- Helper Functions ---
 const findNode = (node, id) => {
     if (!node) return null;
     if (node.id === id) return node;
@@ -30,53 +29,46 @@ const isDescendant = (node, potentialParentId) => {
     return false;
 };
 
-// --- MindMapNode Component (MODIFIED for circular style) ---
+// --- MindMapNode Component ---
 function MindMapNode({
-    node, position, parentPosition, radius, isEditing, isSelected, isDropTarget,
+    node, position, parentPosition, isEditing, isSelected, isDropTarget,
     onNodeMouseDown, onNodeDoubleClick, onNodeMouseOver, onNodeMouseOut,
     editedText, onTextChange, onTextBlur
 }) {
     const getConnectorPath = () => {
         if (!parentPosition) return null;
-        // Simple straight line for radial layout
-        return `M ${parentPosition.x},${parentPosition.y} L ${position.x},${position.y}`;
+        const startX = parentPosition.x + NODE_WIDTH / 2;
+        const startY = parentPosition.y;
+        const endX = position.x - NODE_WIDTH / 2;
+        const endY = position.y;
+        const controlX = startX + (endX - startX) / 2;
+        return `M ${startX},${startY} C ${controlX},${startY} ${controlX},${endY} ${endX},${endY}`;
     };
-
-    const nodeColor = useMemo(() => {
-        // Example coloring based on depth or ID
-        if (node.id === 'root') return '#ffffff';
-        if (node.id.startsWith('task-1')) return '#d4edda'; // Greenish
-        if (node.id.startsWith('task-2')) return '#cce5ff'; // Blueish
-        if (node.id.startsWith('task-3')) return '#f8d7da'; // Reddish
-        return '#f0f0f0'; // Default
-    }, [node.id]);
 
     return (
         <g
-            transform={`translate(${position.x}, ${position.y})`}
+            transform={`translate(${position.x - NODE_WIDTH / 2}, ${position.y - NODE_HEIGHT / 2})`}
             onMouseOver={(e) => { e.stopPropagation(); onNodeMouseOver(node.id); }}
             onMouseOut={(e) => { e.stopPropagation(); onNodeMouseOut(); }}
         >
             {parentPosition && <path d={getConnectorPath()} fill="none" stroke="#a9a9a9" strokeWidth="2" />}
             {isEditing ? (
-                <foreignObject x={-radius} y={-radius} width={radius * 2} height={radius * 2}>
-                    <div xmlns="http://www.w3.org/1999/xhtml" className="node-form-radial">
+                <foreignObject x="0" y="0" width={NODE_WIDTH} height={NODE_HEIGHT}>
+                    <div xmlns="http://www.w3.org/1999/xhtml" className="node-form-miro">
                         <textarea value={editedText} onChange={onTextChange} onBlur={onTextBlur} autoFocus />
                     </div>
                 </foreignObject>
             ) : (
                 <g>
-                    <circle
-                        r={radius} fill={nodeColor}
+                    <rect
+                        width={NODE_WIDTH} height={NODE_HEIGHT} rx="8" fill="#f0f0f0"
                         stroke={isSelected ? '#007bff' : (isDropTarget ? '#28a745' : '#555')}
-                        strokeWidth="2" className="node-circle"
+                        strokeWidth="2" className="node-rect"
                         onMouseDown={(e) => onNodeMouseDown(e, node.id)}
                         onDoubleClick={(e) => onNodeDoubleClick(e, node.id)}
                     />
-                    <foreignObject x={-radius * 0.9} y={-radius * 0.9} width={radius * 1.8} height={radius * 1.8} style={{ pointerEvents: 'none' }}>
-                        <div xmlns="http://www.w3.org/1999/xhtml" className="node-text-wrapper">
-                            <p className="node-text">{node.text}</p>
-                        </div>
+                    <foreignObject x="10" y="10" width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20} style={{ pointerEvents: 'none' }}>
+                        <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{node.text}</p>
                     </foreignObject>
                 </g>
             )}
@@ -85,10 +77,10 @@ function MindMapNode({
 }
 const MemoizedMindMapNode = React.memo(MindMapNode);
 
-// --- Main MindMapEditor Component (HEAVILY MODIFIED) ---
+// --- Main MindMapEditor Component ---
 export default function MindMapEditor({ initialData }) {
     const [data, setData] = useState(initialData);
-    const [viewBox, setViewBox] = useState({ x: -600, y: -500, width: 1200, height: 1000 });
+    const [viewBox, setViewBox] = useState({ x: -200, y: -400, width: 1000, height: 800 });
     const [selectedNodeId, setSelectedNodeId] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [editedText, setEditedText] = useState('');
@@ -98,67 +90,20 @@ export default function MindMapEditor({ initialData }) {
     const interactionRef = useRef({ type: 'none', startPos: { x: 0, y: 0 } });
     const svgRef = useRef(null);
 
-    // NEW: Effect to reset data if the initial prop changes
-    useEffect(() => {
-        setData(initialData);
-    }, [initialData]);
-
-    // MODIFIED: This is the core logic change for the layout.
     const nodePositions = useMemo(() => {
         const positions = new Map();
-        function calculateRadialPositions(node, parentPosition, startAngle = 0, level = 0) {
+        function calculatePositions(node, level, parentY) {
             if (!node) return;
-
+            positions.set(node.id, { x: level * (NODE_WIDTH + H_SPACING), y: parentY });
             const children = node.children || [];
-            const numChildren = children.length;
-
-            let position, radius, distance;
-            switch(level) {
-                case 0: // Root node
-                    position = { x: 0, y: 0 };
-                    radius = NODE_RADIUS_L1;
-                    break;
-                case 1: // Main tasks
-                    distance = RADIAL_DISTANCE_L1;
-                    radius = NODE_RADIUS_L2;
-                    break;
-                case 2: // Sub-tasks
-                    distance = RADIAL_DISTANCE_L2;
-                    radius = NODE_RADIUS_L3;
-                    break;
-                default: // Sub-sub-tasks
-                    distance = RADIAL_DISTANCE_L3;
-                    radius = NODE_RADIUS_L3;
-                    break;
-            }
-
-            if (level > 0) {
-                 position = {
-                    x: parentPosition.x + distance * Math.cos(startAngle),
-                    y: parentPosition.y + distance * Math.sin(startAngle),
-                };
-            }
-
-            positions.set(node.id, { ...position, radius });
-
-            // Calculate positions for children
-            const angleStep = (2 * Math.PI) / (numChildren || 1);
-            let childStartAngle = (level === 0) ? -Math.PI / 2 : startAngle - Math.PI / 2; // Fan out from parent angle
-
-            children.forEach((child, index) => {
-                const angle = childStartAngle + (index * angleStep);
-                calculateRadialPositions(child, position, angle, level + 1);
-            });
+            const totalChildHeight = children.length * (NODE_HEIGHT + V_SPACING) - V_SPACING;
+            let currentY = parentY - totalChildHeight / 2;
+            children.forEach(child => { calculatePositions(child, level + 1, currentY + NODE_HEIGHT / 2); currentY += NODE_HEIGHT + V_SPACING; });
         }
-
-        if (data) calculateRadialPositions(data, { x: 0, y: 0 });
+        if (data) calculatePositions(data, 0, 0);
         return positions;
     }, [data]);
 
-    // Most interaction handlers below this point are the same as your original robust version.
-    // They are well-written and don't need changes, as they are decoupled from the layout logic.
-    // ... (handleNodeMouseDown, handleNodeDoubleClick, etc. are omitted for brevity but should be copied from your original file) ...
-    // START of handlers to copy from your original file
     const handleNodeMouseDown = useCallback((e, nodeId) => {
         e.stopPropagation();
         interactionRef.current = {
@@ -171,19 +116,21 @@ export default function MindMapEditor({ initialData }) {
 
     const handleNodeDoubleClick = useCallback((e, nodeId) => {
         e.stopPropagation();
+        // [THE FIX #1] Explicitly cancel any drag operation when a double-click is detected.
         interactionRef.current = { type: 'edit' };
-        setGhostNode(null);
+        setGhostNode(null); // Ensure no ghost node is shown
 
         const node = findNode(data, nodeId);
         if (node) {
             setEditingId(nodeId);
             setEditedText(node.text);
-            setSelectedNodeId(nodeId);
+            setSelectedNodeId(nodeId); // An edited node is always selected
         }
     }, [data]);
 
     const handleBackgroundMouseDown = useCallback((e) => {
         if (editingId) {
+            // This is the auto-save logic
             const node = findNode(data, editingId);
             if(node && node.text !== editedText) {
                 setData(prev => {
@@ -210,6 +157,7 @@ export default function MindMapEditor({ initialData }) {
             setViewBox(prev => ({ ...prev, x: prev.x - dx * scale, y: prev.y - dy * scale }));
             interactionRef.current.startPos = { x: e.clientX, y: e.clientY };
         } else if (type === 'drag') {
+            // [THE FIX #2] Create the ghost node here, on the first sign of movement.
             if (!ghostNode) {
                 const nodeData = findNode(data, nodeId);
                 if (nodeData) setGhostNode(nodeData);
@@ -221,9 +169,9 @@ export default function MindMapEditor({ initialData }) {
             svgPoint.x = e.clientX;
             svgPoint.y = e.clientY;
             const transformedPoint = svgPoint.matrixTransform(CTM);
-            setGhostNode(prev => prev ? { ...prev, x: transformedPoint.x, y: transformedPoint.y, radius: nodePositions.get(nodeId)?.radius || 50 } : null);
+            setGhostNode(prev => prev ? { ...prev, x: transformedPoint.x, y: transformedPoint.y } : null);
         }
-    }, [viewBox, data, ghostNode, nodePositions]);
+    }, [viewBox, data, ghostNode]);
 
     const handleMouseUp = useCallback(() => {
         const { type, nodeId } = interactionRef.current;
@@ -268,16 +216,13 @@ export default function MindMapEditor({ initialData }) {
         const newHeight = e.deltaY < 0 ? viewBox.height / zoomFactor : viewBox.height * zoomFactor;
         setViewBox({ x: mouseX - (clientX - left) * (newWidth / width), y: mouseY - (clientY - top) * (newHeight / height), width: newWidth, height: newHeight });
     }, [viewBox]);
-    // END of handlers to copy
 
     const renderNodes = useCallback((node, parentPosition) => {
         if (!node) return null;
-        const positionData = nodePositions.get(node.id);
-        if (!positionData) return null;
-
-        const { x, y, radius } = positionData;
-        const position = { x, y };
+        const position = nodePositions.get(node.id);
+        if (!position) return null;
         
+        // Hide the original node while it's being dragged
         if (ghostNode && ghostNode.id === node.id) {
              const children = (node.children || []).map(child => renderNodes(child, position));
              return <React.Fragment key={`${node.id}-ghost-children`}>{children}</React.Fragment>;
@@ -285,10 +230,8 @@ export default function MindMapEditor({ initialData }) {
 
         return (
             <React.Fragment key={node.id}>
-                 {(node.children || []).map(child => renderNodes(child, position))}
                 <MemoizedMindMapNode
                     node={node} position={position} parentPosition={parentPosition}
-                    radius={radius}
                     isSelected={selectedNodeId === node.id}
                     isEditing={editingId === node.id}
                     isDropTarget={dropTargetId === node.id}
@@ -300,32 +243,10 @@ export default function MindMapEditor({ initialData }) {
                     onTextChange={(e) => setEditedText(e.target.value)}
                     onTextBlur={handleTextBlur}
                 />
+                {(node.children || []).map(child => renderNodes(child, position))}
             </React.Fragment>
         );
     }, [nodePositions, selectedNodeId, editingId, dropTargetId, ghostNode, editedText, handleNodeMouseDown, handleNodeDoubleClick, handleTextBlur]);
-    
-    // NEW: Render connectors first so they appear behind nodes
-    const renderConnectors = useCallback((node) => {
-        if (!node || !node.children) return null;
-        const parentPosition = nodePositions.get(node.id);
-        if (!parentPosition) return null;
-        return (
-            <React.Fragment key={`${node.id}-connectors`}>
-                {node.children.map(child => {
-                    const childPosition = nodePositions.get(child.id);
-                    if (!childPosition) return null;
-                    return (
-                        <React.Fragment key={child.id}>
-                            <path d={`M ${parentPosition.x},${parentPosition.y} L ${childPosition.x},${childPosition.y}`}
-                                fill="none" stroke="#a9a9a9" strokeWidth="2"
-                            />
-                            {renderConnectors(child)}
-                        </React.Fragment>
-                    );
-                })}
-            </React.Fragment>
-        );
-    }, [nodePositions]);
 
     return (
         <div onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
@@ -336,36 +257,22 @@ export default function MindMapEditor({ initialData }) {
             >
                 <defs>
                     <style>{`
-                        .node-circle { cursor: pointer; transition: stroke 0.2s; }
-                        .node-text-wrapper {
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            height: 100%;
-                            text-align: center;
-                        }
-                        .node-text { font-family: sans-serif; font-size: 14px; margin: 0; color: #333; word-wrap: break-word; }
-                        .node-form-radial textarea {
+                        .node-rect { cursor: pointer; transition: stroke 0.2s; }
+                        .node-text { font-family: sans-serif; font-size: 14px; margin: 0; color: #333; text-align: center; word-wrap: break-word; }
+                        .node-form-miro textarea {
                             width: 100%; height: 100%; box-sizing: border-box;
-                            border: 2px solid #007bff; border-radius: 50%; /* Make textarea circular */
-                            padding: 20px; font-family: sans-serif; font-size: 14px; resize: none; text-align: center;
+                            border: 2px solid #007bff; border-radius: 8px;
+                            padding: 8px; font-family: sans-serif; font-size: 14px; resize: none; text-align: center;
                             background-color: #f0f0f0;
-                            overflow: hidden;
                         }
                     `}</style>
                 </defs>
-                 {/* Center the entire mind map */}
-                <g>
-                    {data && renderConnectors(data)}
-                    {data && renderNodes(data, null)}
-                </g>
+                <g transform="translate(100, 300)">{data && renderNodes(data, null)}</g>
                 {ghostNode && (
                     <g transform={`translate(${ghostNode.x}, ${ghostNode.y})`} style={{ pointerEvents: 'none', opacity: 0.7 }}>
-                        <circle r={ghostNode.radius || 50} fill="#d0e8ff" stroke="#007bff" />
-                        <foreignObject x={-(ghostNode.radius || 50) * 0.9} y={-(ghostNode.radius || 50) * 0.9} width={(ghostNode.radius || 50) * 1.8} height={(ghostNode.radius || 50) * 1.8}>
-                             <div xmlns="http://www.w3.org/1999/xhtml" className="node-text-wrapper">
-                                <p className="node-text">{ghostNode.text}</p>
-                            </div>
+                        <rect x={-NODE_WIDTH / 2} y={-NODE_HEIGHT / 2} width={NODE_WIDTH} height={NODE_HEIGHT} rx="8" fill="#d0e8ff" stroke="#007bff" />
+                        <foreignObject x={-NODE_WIDTH / 2 + 10} y={-NODE_HEIGHT / 2 + 10} width={NODE_WIDTH - 20} height={NODE_HEIGHT - 20}>
+                            <p xmlns="http://www.w3.org/1999/xhtml" className="node-text">{ghostNode.text}</p>
                         </foreignObject>
                     </g>
                 )}
